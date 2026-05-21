@@ -1,4 +1,4 @@
-name: Fetch and Fix WOP Sitemap
+name: Fetch and Update WOP URLs
 
 on:
   schedule:
@@ -21,7 +21,7 @@ jobs:
       
       - name: 提取 XML 内容并转换为 TXT 格式
         run: |
-          # 提取 XML 部分并转换为纯文本（提取 URL）
+          # 提取 XML 部分
           sed -n '/<?xml/,/<\/urlset>/p' raw.txt > temp.xml
           
           if ! grep -q "</urlset>" temp.xml; then
@@ -41,12 +41,12 @@ jobs:
           echo "✅ 已提取 $(wc -l < new-urls.txt) 个 URL"
           rm -f temp.xml raw.txt
       
-      - name: 提取新增内容（仅在已有文件时）
+      - name: 提取新增内容
         id: compare
         run: |
-          if [ -f "sitemap.txt" ]; then
+          if [ -f "urls.txt" ]; then
             # 找出新文件中有但旧文件中没有的行
-            comm -23 new-urls.txt sitemap.txt > incremental.txt
+            comm -23 new-urls.txt urls.txt > incremental.txt
             
             COUNT=$(wc -l < incremental.txt)
             if [ "$COUNT" -gt 0 ]; then
@@ -61,55 +61,52 @@ jobs:
           else
             echo "🆕 首次运行，创建完整文件"
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "首次运行" >> $GITHUB_OUTPUT
-            # 首次运行时，所有内容都是新增的
             cp new-urls.txt incremental.txt
           fi
       
-      - name: 更新主文件（当有新增内容时）
+      - name: 更新主文件
         if: steps.compare.outputs.changed == 'true'
         run: |
-          DATE=$(date +'%Y%m%d')
+          DATE=$(date +'%Y%m%d_%H%M%S')
           
           # 归档旧版本
-          if [ -f "sitemap.txt" ]; then
+          if [ -f "urls.txt" ]; then
             mkdir -p archive
-            cp sitemap.txt "archive/${DATE}sitemap.txt"
-            echo "📦 旧版本已归档为 archive/${DATE}sitemap.txt"
+            cp urls.txt "archive/urls_${DATE}.txt"
+            echo "📦 旧版本已归档"
           fi
           
           # 将新增内容追加到主文件
-          cat incremental.txt >> sitemap.txt
+          cat incremental.txt >> urls.txt
           
           # 去重并排序
-          sort -u sitemap.txt -o sitemap.txt
+          sort -u urls.txt -o urls.txt
           
-          NEW_COUNT=$(wc -l < sitemap.txt)
+          NEW_COUNT=$(wc -l < urls.txt)
           echo "✅ 已更新，当前共 $NEW_COUNT 条 URL"
           
-          # 记录本次新增内容到单独文件
+          # 记录本次新增内容
           mkdir -p changes
-          cat incremental.txt > "changes/${DATE}_新增.txt"
-          echo "📝 新增内容已保存至 changes/${DATE}_新增.txt"
+          cp incremental.txt "changes/新增_${DATE}.txt"
+          echo "📝 新增内容已保存"
       
       - name: 删除超过30天的归档文件
         if: steps.compare.outputs.changed == 'true'
         run: |
-          find archive/ -name "*.txt" -type f -mtime +30 -delete
-          find changes/ -name "*.txt" -type f -mtime +30 -delete
-          COUNT=$(find archive/ -name "*.txt" | wc -l)
-          echo "📁 当前归档文件数量: $COUNT"
+          find archive/ -name "*.txt" -type f -mtime +30 -delete 2>/dev/null || true
+          find changes/ -name "*.txt" -type f -mtime +30 -delete 2>/dev/null || true
+          echo "📁 清理完成"
       
       - name: 提交并推送更改
         if: steps.compare.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sitemap.txt archive/ changes/
+          git add urls.txt archive/ changes/
           git commit -m "新增 ${{ steps.compare.outputs.count }} 条URL - $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化"
           git push
       
-      - name: 无变化时输出提示并清理
+      - name: 无变化时清理
         if: steps.compare.outputs.changed == 'false'
         run: |
           echo "📭 与上次相比无新增 URL"
