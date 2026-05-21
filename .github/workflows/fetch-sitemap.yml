@@ -29,11 +29,14 @@ jobs:
             echo "❌ 提取失败"
             exit 1
           fi
+          
+          # 将所有 http:// 替换为 https://
+          sed -i 's|http://write-on-paper.wikidot.com|https://write-on-paper.wikidot.com|g' sitemap-new.xml
+          echo "✅ 已将 HTTP 链接替换为 HTTPS"
       
       - name: 对比新旧版本，决定是否更新
         id: compare
         run: |
-          # 如果当前目录已有 sitemap.xml，对比内容
           if [ -f "sitemap.xml" ]; then
             if diff -q sitemap.xml sitemap-new.xml > /dev/null; then
               echo "📭 内容无变化，跳过更新"
@@ -50,29 +53,22 @@ jobs:
       - name: 更新文件（仅当有变化时）
         if: steps.compare.outputs.changed == 'true'
         run: |
-          # 获取当前日期 YYYYMMDD
           DATE=$(date +'%Y%m%d')
           
-          # 如果旧版 sitemap.xml 存在，将其重命名为带日期的归档文件
           if [ -f "sitemap.xml" ]; then
+            mkdir -p archive
             mv sitemap.xml "archive/${DATE}sitemap.xml"
             echo "📦 旧版本已归档为 archive/${DATE}sitemap.xml"
           fi
           
-          # 将新文件移动到 sitemap.xml
           mv sitemap-new.xml sitemap.xml
           echo "✅ 已更新为最新版本"
       
       - name: 删除超过30天的归档文件
         if: steps.compare.outputs.changed == 'true'
         run: |
-          # 确保 archive 目录存在
           mkdir -p archive
-          
-          # 删除30天前的文件
           find archive/ -name "*sitemap.xml" -type f -mtime +30 -delete
-          
-          # 统计剩余归档数量
           COUNT=$(find archive/ -name "*sitemap.xml" | wc -l)
           echo "📁 当前归档文件数量: $COUNT"
       
@@ -89,5 +85,4 @@ jobs:
         if: steps.compare.outputs.changed == 'false'
         run: |
           echo "📭 内容与上次相同，无需更新"
-          # 清理临时文件
           rm -f sitemap-new.xml raw.txt
