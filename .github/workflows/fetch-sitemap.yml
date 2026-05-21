@@ -1,0 +1,93 @@
+name: Fetch and Fix WOP Sitemap
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 每天凌晨3点运行
+  workflow_dispatch:       # 支持手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+      
+      - name: 抓取 Wikidot 的 sitemap.xml
+        run: |
+          curl -L -o raw.txt \
+            https://write-on-paper.wikidot.com/sitemap.xml
+          echo "✅ 原始文件已下载"
+      
+      - name: 提取 XML 内容并修复格式
+        run: |
+          sed -n '/<?xml/,/<\/urlset>/p' raw.txt > sitemap-new.xml
+          
+          if grep -q "</urlset>" sitemap-new.xml; then
+            echo "✅ XML 提取成功"
+          else
+            echo "❌ 提取失败"
+            exit 1
+          fi
+      
+      - name: 对比新旧版本，决定是否更新
+        id: compare
+        run: |
+          # 如果当前目录已有 sitemap.xml，对比内容
+          if [ -f "sitemap.xml" ]; then
+            if diff -q sitemap.xml sitemap-new.xml > /dev/null; then
+              echo "📭 内容无变化，跳过更新"
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "🔄 检测到内容变化，开始更新"
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "🆕 首次运行，创建 sitemap.xml"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 更新文件（仅当有变化时）
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          # 获取当前日期 YYYYMMDD
+          DATE=$(date +'%Y%m%d')
+          
+          # 如果旧版 sitemap.xml 存在，将其重命名为带日期的归档文件
+          if [ -f "sitemap.xml" ]; then
+            mv sitemap.xml "archive/${DATE}sitemap.xml"
+            echo "📦 旧版本已归档为 archive/${DATE}sitemap.xml"
+          fi
+          
+          # 将新文件移动到 sitemap.xml
+          mv sitemap-new.xml sitemap.xml
+          echo "✅ 已更新为最新版本"
+      
+      - name: 删除超过30天的归档文件
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          # 确保 archive 目录存在
+          mkdir -p archive
+          
+          # 删除30天前的文件
+          find archive/ -name "*sitemap.xml" -type f -mtime +30 -delete
+          
+          # 统计剩余归档数量
+          COUNT=$(find archive/ -name "*sitemap.xml" | wc -l)
+          echo "📁 当前归档文件数量: $COUNT"
+      
+      - name: 提交并推送更改
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add sitemap.xml archive/
+          git commit -m "更新 sitemap.xml - $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化"
+          git push
+      
+      - name: 无变化时输出提示
+        if: steps.compare.outputs.changed == 'false'
+        run: |
+          echo "📭 内容与上次相同，无需更新"
+          # 清理临时文件
+          rm -f sitemap-new.xml raw.txt
