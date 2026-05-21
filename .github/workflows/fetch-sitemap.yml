@@ -2,7 +2,7 @@ name: Fetch and Update WOP URLs
 
 on:
   schedule:
-    - cron: '0 3 * * *'   # 每天凌晨3点运行
+    - cron: '0 3 * * 1'   # 每周一凌晨3点运行
   workflow_dispatch:       # 支持手动触发
 
 jobs:
@@ -64,46 +64,38 @@ jobs:
             cp new-urls.txt incremental.txt
           fi
       
-      - name: 更新主文件
+      - name: 更新文件（增量模式）
         if: steps.compare.outputs.changed == 'true'
         run: |
-          DATE=$(date +'%Y%m%d_%H%M%S')
+          DATE=$(date +'%Y%m%d')
           
-          # 归档旧版本
+          # 归档旧版本（如果存在）
           if [ -f "urls.txt" ]; then
             mkdir -p archive
-            cp urls.txt "archive/urls_${DATE}.txt"
-            echo "📦 旧版本已归档"
+            mv urls.txt "archive/${DATE}urls.txt"
+            echo "📦 旧版本已归档为 archive/${DATE}urls.txt"
           fi
           
-          # 将新增内容追加到主文件
-          cat incremental.txt >> urls.txt
-          
-          # 去重并排序
-          sort -u urls.txt -o urls.txt
+          # 关键改动：用新增内容直接覆盖 urls.txt（不追加）
+          cp incremental.txt urls.txt
           
           NEW_COUNT=$(wc -l < urls.txt)
-          echo "✅ 已更新，当前共 $NEW_COUNT 条 URL"
-          
-          # 记录本次新增内容
-          mkdir -p changes
-          cp incremental.txt "changes/新增_${DATE}.txt"
-          echo "📝 新增内容已保存"
+          echo "✅ 已更新，本次新增 $NEW_COUNT 条 URL"
       
       - name: 删除超过30天的归档文件
         if: steps.compare.outputs.changed == 'true'
         run: |
-          find archive/ -name "*.txt" -type f -mtime +30 -delete 2>/dev/null || true
-          find changes/ -name "*.txt" -type f -mtime +30 -delete 2>/dev/null || true
-          echo "📁 清理完成"
+          find archive/ -name "*urls.txt" -type f -mtime +30 -delete 2>/dev/null || true
+          echo "📁 清理完成，当前归档文件："
+          ls -la archive/ 2>/dev/null || echo "（无归档文件）"
       
       - name: 提交并推送更改
         if: steps.compare.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add urls.txt archive/ changes/
-          git commit -m "新增 ${{ steps.compare.outputs.count }} 条URL - $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化"
+          git add urls.txt archive/
+          git commit -m "新增 ${{ steps.compare.outputs.count }} 条URL - $(date '+%Y-%m-%d %H:%M:%S')"
           git push
       
       - name: 无变化时清理
